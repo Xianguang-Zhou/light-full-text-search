@@ -61,20 +61,13 @@ public class TextIndex {
 		docIds.add(docId);
 	}
 
-	private void addWordToDocId(String docId, String word) {
-		Set<String> words = docIdToWords.get(docId);
-		if (words == null) {
-			words = new HashSet<>();
-			docIdToWords.put(docId, words);
-		}
-		words.add(word);
-	}
-
 	public void addIndex(String id, String content) {
 		Set<String> words = separateWord(content);
-		for (String word : words) {
-			addDocIdToWord(word, id);
-			addWordToDocId(id, word);
+		if (!words.isEmpty()) {
+			for (String word : words) {
+				addDocIdToWord(word, id);
+			}
+			docIdToWords.put(id, words);
 		}
 	}
 
