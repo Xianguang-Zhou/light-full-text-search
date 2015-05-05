@@ -16,32 +16,41 @@
  */
 package org.zxg.text.search;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 public class TextIndex {
 
-	private Map<String, Set<String>> wordToDocIds;
-	private Map<String, Set<String>> docIdToWords;
+	private Map<String, Set<String>> wordToDocId;
+	private Map<String, Map<String, Integer>> docIdToWordToFrequency;
+	private Map<String, Integer> docIdToWordAmount;
 
 	public TextIndex() {
-		wordToDocIds = new HashMap<>();
-		docIdToWords = new HashMap<>();
+		wordToDocId = new HashMap<>();
+		docIdToWordToFrequency = new HashMap<>();
+		docIdToWordAmount = new HashMap<>();
 	}
 
-	private Set<String> separateWord(String content) {
-		content = content.replace('.', ' ');
-		content = content.replace(',', ' ');
-		content = content.replace('!', ' ');
-		content = content.replace('"', ' ');
-		content = content.replace('\'', ' ');
-		content = content.replace(':', ' ');
-		content = content.replace(';', ' ');
-		content = content.replace('?', ' ');
+	private String replacePunctuation(String text) {
+		text = text.replace('.', ' ');
+		text = text.replace(',', ' ');
+		text = text.replace('!', ' ');
+		text = text.replace('"', ' ');
+		text = text.replace('\'', ' ');
+		text = text.replace(':', ' ');
+		text = text.replace(';', ' ');
+		text = text.replace('?', ' ');
+		return text;
+	}
 
-		String[] wordsArray = content.split(" ");
+	private Set<String> separateWord(String text) {
+		String[] wordsArray = replacePunctuation(text).split(" ");
 
 		Set<String> wordsSet = new HashSet<>();
 		for (String word : wordsArray) {
@@ -52,48 +61,121 @@ public class TextIndex {
 		return wordsSet;
 	}
 
+	private Map<String, Integer> separateWordFrequency(String text) {
+		String[] wordsArray = replacePunctuation(text).split(" ");
+
+		Map<String, Integer> wordsFrequency = new HashMap<>();
+		for (String word : wordsArray) {
+			if (!word.isEmpty()) {
+				Integer frequency = wordsFrequency.get(word);
+				if (frequency == null) {
+					frequency = 1;
+				} else {
+					++frequency;
+				}
+				wordsFrequency.put(word, frequency);
+			}
+		}
+		return wordsFrequency;
+	}
+
 	private void addDocIdToWord(String word, String docId) {
-		Set<String> docIds = wordToDocIds.get(word);
+		Set<String> docIds = wordToDocId.get(word);
 		if (docIds == null) {
 			docIds = new HashSet<>();
-			wordToDocIds.put(word, docIds);
+			wordToDocId.put(word, docIds);
 		}
 		docIds.add(docId);
 	}
 
 	public void addIndex(String id, String content) {
-		Set<String> words = separateWord(content);
-		if (!words.isEmpty()) {
-			for (String word : words) {
-				addDocIdToWord(word, id);
+		Map<String, Integer> wordsFrequency = separateWordFrequency(content);
+		if (!wordsFrequency.isEmpty()) {
+			Integer wordAmount = 0;
+			for (Map.Entry<String, Integer> entry : wordsFrequency.entrySet()) {
+				addDocIdToWord(entry.getKey(), id);
+				wordAmount += entry.getValue();
 			}
-			docIdToWords.put(id, words);
+			docIdToWordToFrequency.put(id, wordsFrequency);
+			docIdToWordAmount.put(id, wordAmount);
 		}
 	}
 
 	public void removeIndex(String id) {
-		Set<String> words = docIdToWords.get(id);
-		if (words != null) {
-			for (String word : words) {
-				Set<String> docIds = wordToDocIds.get(word);
+		Map<String, Integer> wordsFrequency = docIdToWordToFrequency.get(id);
+		if (wordsFrequency != null) {
+			for (String word : wordsFrequency.keySet()) {
+				Set<String> docIds = wordToDocId.get(word);
 				docIds.remove(id);
 				if (docIds.isEmpty()) {
-					wordToDocIds.remove(word);
+					wordToDocId.remove(word);
 				}
 			}
-			docIdToWords.remove(id);
+			docIdToWordToFrequency.remove(id);
+			docIdToWordAmount.remove(id);
 		}
 	}
 
-	public Set<String> search(String query) {
+	public List<String> search(String query) {
 		Set<String> words = separateWord(query);
-		Set<String> docIds = new HashSet<>();
+
+		Map<String, Double> docIdToScore = new HashMap<>();
 		for (String word : words) {
-			Set<String> wordDocIds = wordToDocIds.get(word);
+			Set<String> wordDocIds = wordToDocId.get(word);
 			if (wordDocIds != null) {
-				docIds.addAll(wordDocIds);
+				for (String wordDocId : wordDocIds) {
+					double termFrequency = ((double) docIdToWordToFrequency
+							.get(wordDocId).get(word))
+							/ docIdToWordAmount.get(wordDocId);
+					double inverseDocumentFrequency = Math
+							.log10(((double) docIdToWordToFrequency.size())
+									/ wordDocIds.size());
+					double weight = termFrequency * inverseDocumentFrequency;
+
+					Double score = docIdToScore.get(wordDocId);
+					if (score == null) {
+						score = 0.0;
+					}
+					score += weight;
+					docIdToScore.put(wordDocId, score);
+				}
 			}
 		}
-		return docIds;
+
+		List<DocIdAndScore> docIdAndScoreList = new ArrayList<DocIdAndScore>(
+				docIdToScore.size());
+		for (Map.Entry<String, Double> entry : docIdToScore.entrySet()) {
+			docIdAndScoreList.add(new DocIdAndScore(entry.getKey(), entry
+					.getValue()));
+		}
+		Collections.sort(docIdAndScoreList, new Comparator<DocIdAndScore>() {
+			@Override
+			public int compare(DocIdAndScore o1, DocIdAndScore o2) {
+				double score = o2.score - o1.score;
+				if (score > 0) {
+					return 1;
+				} else if (score < 0) {
+					return -1;
+				} else {
+					return 0;
+				}
+			}
+		});
+
+		List<String> docIdList = new ArrayList<>(docIdAndScoreList.size());
+		for (DocIdAndScore docIdAndScore : docIdAndScoreList) {
+			docIdList.add(docIdAndScore.docId);
+		}
+		return docIdList;
+	}
+
+	private static class DocIdAndScore {
+		public String docId;
+		public Double score;
+
+		public DocIdAndScore(String docId, Double score) {
+			this.docId = docId;
+			this.score = score;
+		}
 	}
 }
